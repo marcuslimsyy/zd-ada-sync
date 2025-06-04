@@ -717,9 +717,9 @@ def format_articles_for_ada(articles, knowledge_source_id, override_language=Non
         zd_locale = article.get("locale", "en")
         
         # Determine language to use in Ada payload
-        if override_language:
+        if override_language and override_language.strip():
             # Use user-specified language
-            ada_language = override_language.lower()
+            ada_language = override_language.strip().lower()
         else:
             # Use language from Zendesk article
             ada_language = zd_locale.lower() if zd_locale else "en"
@@ -762,7 +762,7 @@ def format_articles_for_ada(articles, knowledge_source_id, override_language=Non
         
         formatted_articles.append(ada_article)
     
-    language_desc = f"override: {override_language}" if override_language else "from Zendesk"
+    language_desc = f"override: {override_language}" if override_language and override_language.strip() else "from Zendesk"
     add_log("Format Articles", "SUCCESS", details=f"Formatted {len(formatted_articles)} articles, skipped {skipped_count}, language: {language_desc}")
     return {"articles": formatted_articles}
 
@@ -1252,17 +1252,14 @@ if 'fetched_articles' in st.session_state:
                                               help="If enabled, all articles will use the specified language instead of their Zendesk language")
         
         with col2:
-            override_language = None
+            override_language = ""
             if use_language_override:
-                # Common language options
-                language_options = [
-                    "en", "es", "fr", "de", "it", "pt", "nl", "ja", "ko", "zh", "ru", "ar", "hi", "th", "vi"
-                ]
-                override_language = st.selectbox(
-                    "Select language code:",
-                    options=language_options,
-                    help="IETF language code (e.g., 'en' for English, 'es' for Spanish)",
-                    key="language_override_select"
+                override_language = st.text_input(
+                    "Language code:",
+                    value="",
+                    placeholder="e.g., en, es, fr, de, zh",
+                    help="Enter IETF language code (e.g., 'en' for English, 'es' for Spanish, 'zh-cn' for Chinese)",
+                    key="language_override_input"
                 )
             else:
                 st.info("Using language from Zendesk articles")
@@ -1275,7 +1272,7 @@ if 'fetched_articles' in st.session_state:
                 
                 for i, article in enumerate(sample_articles, 1):
                     zd_language = article.get('locale', 'en')
-                    ada_language = override_language if use_language_override else zd_language
+                    ada_language = override_language.strip().lower() if use_language_override and override_language.strip() else zd_language
                     
                     st.write(f"{i}. **{article.get('title', 'No Title')[:50]}{'...' if len(article.get('title', '')) > 50 else ''}**")
                     st.write(f"   📍 Zendesk: `{zd_language}` → 🎯 Ada: `{ada_language}`")
@@ -1288,7 +1285,7 @@ if 'fetched_articles' in st.session_state:
         # Get language override value
         override_lang = None
         if st.session_state.get('use_language_override', False):
-            override_lang = st.session_state.get('language_override_select', None)
+            override_lang = st.session_state.get('language_override_input', "").strip()
         
         sample_articles = st.session_state['fetched_articles'][:3]
         formatted_sample = format_articles_for_ada(sample_articles, selected_source_id, override_lang)
@@ -1334,7 +1331,7 @@ if 'fetched_articles' in st.session_state:
                 # Get language override for upload
                 final_override_lang = None
                 if st.session_state.get('use_language_override', False):
-                    final_override_lang = st.session_state.get('language_override_select', None)
+                    final_override_lang = st.session_state.get('language_override_input', "").strip()
                 
                 formatted_articles = format_articles_for_ada(st.session_state['fetched_articles'], selected_source_id, final_override_lang)
                 upload_articles_to_ada(formatted_articles)
