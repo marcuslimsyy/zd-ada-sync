@@ -751,14 +751,14 @@ def format_articles_for_ada(articles, knowledge_source_id, override_language=Non
             continue
 
         ada_article = {
-            "id": f"zd_{zd_id}",
-            "name": zd_title[:255],
-            "content": markdown_content,
-            "knowledge_source_id": knowledge_source_id,
-            "url": corrected_url,
-            "tag_ids": [],
-            "language": ada_language
-        }
+    "id": f"zd_{zd_id}-{zd_locale}",  # Include locale in ID
+    "name": zd_title[:255],
+    "content": markdown_content,
+    "knowledge_source_id": knowledge_source_id,
+    "url": corrected_url,
+    "tag_ids": [],
+    "language": ada_language
+}
         
         formatted_articles.append(ada_article)
     
