@@ -9,89 +9,11 @@ import random
 import string
 import datetime
 import pandas as pd
-import os
 import urllib.parse
 
 # Constants
 RATE_LIMIT_DELAY = 0.1
 DEFAULT_LANGUAGE = "en"
-CONFIG_FILE = "zendesk_ada_configs.json"
-
-# Configuration Management Functions
-def save_configuration(config_name, config_data):
-    """Save configuration to file."""
-    try:
-        configs = {}
-        if os.path.exists(CONFIG_FILE):
-            with open(CONFIG_FILE, 'r') as f:
-                configs = json.load(f)
-        
-        configs[config_name] = config_data
-        
-        with open(CONFIG_FILE, 'w') as f:
-            json.dump(configs, f, indent=2)
-        
-        if 'saved_configs' not in st.session_state:
-            st.session_state['saved_configs'] = {}
-        st.session_state['saved_configs'][config_name] = config_data
-        
-        return True
-    except Exception as e:
-        st.error(f"Failed to save configuration: {str(e)}")
-        return False
-
-def load_configuration(config_name):
-    """Load configuration from file."""
-    try:
-        if os.path.exists(CONFIG_FILE):
-            with open(CONFIG_FILE, 'r') as f:
-                configs = json.load(f)
-                return configs.get(config_name, {})
-    except Exception as e:
-        st.error(f"Failed to load configuration: {str(e)}")
-    return {}
-
-def get_saved_config_names():
-    """Get list of saved configuration names from file."""
-    try:
-        if os.path.exists(CONFIG_FILE):
-            with open(CONFIG_FILE, 'r') as f:
-                configs = json.load(f)
-                return list(configs.keys())
-    except Exception as e:
-        st.error(f"Failed to read configurations: {str(e)}")
-    return []
-
-def delete_configuration(config_name):
-    """Delete a saved configuration from file."""
-    try:
-        if os.path.exists(CONFIG_FILE):
-            with open(CONFIG_FILE, 'r') as f:
-                configs = json.load(f)
-            
-            if config_name in configs:
-                del configs[config_name]
-                
-                with open(CONFIG_FILE, 'w') as f:
-                    json.dump(configs, f, indent=2)
-                
-                if 'saved_configs' in st.session_state and config_name in st.session_state['saved_configs']:
-                    del st.session_state['saved_configs'][config_name]
-                
-                return True
-    except Exception as e:
-        st.error(f"Failed to delete configuration: {str(e)}")
-    return False
-
-def load_all_configs_to_session():
-    """Load all configurations from file to session state."""
-    try:
-        if os.path.exists(CONFIG_FILE):
-            with open(CONFIG_FILE, 'r') as f:
-                configs = json.load(f)
-                st.session_state['saved_configs'] = configs
-    except Exception as e:
-        st.error(f"Failed to load configurations: {str(e)}")
 
 # Logging System
 def init_logs():
@@ -161,28 +83,59 @@ def get_brand_base_url(brand):
     else:
         return f"https://{brand['subdomain']}.zendesk.com"
 
+def filter_published_articles(articles):
+    """Filter articles to only include published ones."""
+    published_only = st.session_state.get('published_only', False)
+    if not published_only:
+        return articles
+    
+    published_articles = []
+    for article in articles:
+        # An article is published if draft is False
+        if not article.get('draft', True):
+            published_articles.append(article)
+    
+    return published_articles
+
 # API Functions
 def get_locales():
     """Fetch available locales from Zendesk."""
     zd_subdomain = st.session_state.get('zd_subdomain', '')
     include_restricted = st.session_state.get('include_restricted', True)
     
+    if not zd_subdomain:
+        st.error("Zendesk subdomain is required")
+        return [DEFAULT_LANGUAGE]
+    
     endpoint = f"https://{zd_subdomain}.zendesk.com/api/v2/locales"
     add_log("Fetch Locales", "INFO", endpoint, details="Requesting locales from Zendesk")
     
     auth = get_zd_auth() if include_restricted else None
-    response = requests.get(endpoint, auth=auth)
     
-    if response.status_code == 200:
-        response_data = response.json()
-        locales = [locale['locale'].lower() for locale in response_data.get('locales', [])]
-        result = locales if locales else [DEFAULT_LANGUAGE]
-        add_log("Fetch Locales", "SUCCESS", endpoint, None, response_data, f"Found {len(result)} locales")
-        return result
-    else:
-        error_response = {"status_code": response.status_code, "error": response.text}
-        add_log("Fetch Locales", "ERROR", endpoint, None, error_response, f"Status: {response.status_code}")
-        st.error(f"Failed to fetch locales: {response.text}")
+    try:
+        response = requests.get(endpoint, auth=auth, timeout=30)
+        
+        if response.status_code == 200:
+            response_data = response.json()
+            locales = [locale['locale'].lower() for locale in response_data.get('locales', [])]
+            result = locales if locales else [DEFAULT_LANGUAGE]
+            add_log("Fetch Locales", "SUCCESS", endpoint, None, response_data, f"Found {len(result)} locales")
+            return result
+        elif response.status_code == 401:
+            error_msg = "Authentication failed. Please check your email and API token."
+            st.error(f"🔒 {error_msg}")
+            add_log("Fetch Locales", "ERROR", endpoint, None, {"status": 401, "error": error_msg})
+            return [DEFAULT_LANGUAGE]
+        else:
+            error_response = {"status_code": response.status_code, "error": response.text}
+            add_log("Fetch Locales", "ERROR", endpoint, None, error_response, f"Status: {response.status_code}")
+            st.error(f"Failed to fetch locales (Status {response.status_code}): {response.text}")
+            return [DEFAULT_LANGUAGE]
+            
+    except requests.exceptions.RequestException as e:
+        error_msg = f"Network error: {str(e)}"
+        st.error(error_msg)
+        add_log("Fetch Locales", "ERROR", endpoint, None, {"error": error_msg})
         return [DEFAULT_LANGUAGE]
 
 def get_categories():
@@ -190,21 +143,38 @@ def get_categories():
     zd_subdomain = st.session_state.get('zd_subdomain', '')
     include_restricted = st.session_state.get('include_restricted', True)
     
+    if not zd_subdomain:
+        st.error("Zendesk subdomain is required")
+        return []
+    
     endpoint = f"https://{zd_subdomain}.zendesk.com/api/v2/help_center/categories"
     add_log("Fetch Categories", "INFO", endpoint, details="Requesting categories from Zendesk")
     
     auth = get_zd_auth() if include_restricted else None
-    response = requests.get(endpoint, auth=auth)
     
-    if response.status_code == 200:
-        response_data = response.json()
-        categories = response_data.get('categories', [])
-        add_log("Fetch Categories", "SUCCESS", endpoint, None, response_data, f"Found {len(categories)} categories")
-        return categories
-    else:
-        error_response = {"status_code": response.status_code, "error": response.text}
-        add_log("Fetch Categories", "ERROR", endpoint, None, error_response, f"Status: {response.status_code}")
-        st.error(f"Failed to fetch categories: {response.text}")
+    try:
+        response = requests.get(endpoint, auth=auth, timeout=30)
+        
+        if response.status_code == 200:
+            response_data = response.json()
+            categories = response_data.get('categories', [])
+            add_log("Fetch Categories", "SUCCESS", endpoint, None, response_data, f"Found {len(categories)} categories")
+            return categories
+        elif response.status_code == 401:
+            error_msg = "Authentication failed. Please check your email and API token."
+            st.error(f"🔒 {error_msg}")
+            add_log("Fetch Categories", "ERROR", endpoint, None, {"status": 401, "error": error_msg})
+            return []
+        else:
+            error_response = {"status_code": response.status_code, "error": response.text}
+            add_log("Fetch Categories", "ERROR", endpoint, None, error_response, f"Status: {response.status_code}")
+            st.error(f"Failed to fetch categories (Status {response.status_code}): {response.text}")
+            return []
+            
+    except requests.exceptions.RequestException as e:
+        error_msg = f"Network error: {str(e)}"
+        st.error(error_msg)
+        add_log("Fetch Categories", "ERROR", endpoint, None, {"error": error_msg})
         return []
 
 def get_brands():
@@ -212,21 +182,44 @@ def get_brands():
     zd_subdomain = st.session_state.get('zd_subdomain', '')
     include_restricted = st.session_state.get('include_restricted', True)
     
+    if not zd_subdomain:
+        st.error("Zendesk subdomain is required")
+        return []
+    
     endpoint = f"https://{zd_subdomain}.zendesk.com/api/v2/brands"
     add_log("Fetch Brands", "INFO", endpoint, details="Requesting brands from Zendesk")
     
     auth = get_zd_auth() if include_restricted else None
-    response = requests.get(endpoint, auth=auth)
     
-    if response.status_code == 200:
-        response_data = response.json()
-        brands = response_data.get('brands', [])
-        add_log("Fetch Brands", "SUCCESS", endpoint, None, response_data, f"Found {len(brands)} brands")
-        return brands
+    # Debug logging
+    if auth:
+        add_log("Authentication", "INFO", details=f"Using auth for user: {auth.username}")
     else:
-        error_response = {"status_code": response.status_code, "error": response.text}
-        add_log("Fetch Brands", "ERROR", endpoint, None, error_response, f"Status: {response.status_code}")
-        st.error(f"Failed to fetch brands: {response.text}")
+        add_log("Authentication", "WARNING", details="No authentication provided")
+    
+    try:
+        response = requests.get(endpoint, auth=auth, timeout=30)
+        
+        if response.status_code == 200:
+            response_data = response.json()
+            brands = response_data.get('brands', [])
+            add_log("Fetch Brands", "SUCCESS", endpoint, None, response_data, f"Found {len(brands)} brands")
+            return brands
+        elif response.status_code == 401:
+            error_msg = "Authentication failed. Please check your email and API token."
+            st.error(f"🔒 {error_msg}")
+            add_log("Fetch Brands", "ERROR", endpoint, None, {"status": 401, "error": error_msg})
+            return []
+        else:
+            error_response = {"status_code": response.status_code, "error": response.text}
+            add_log("Fetch Brands", "ERROR", endpoint, None, error_response, f"Status: {response.status_code}")
+            st.error(f"Failed to fetch brands (Status {response.status_code}): {response.text}")
+            return []
+            
+    except requests.exceptions.RequestException as e:
+        error_msg = f"Network error: {str(e)}"
+        st.error(error_msg)
+        add_log("Fetch Brands", "ERROR", endpoint, None, {"error": error_msg})
         return []
 
 def get_sections():
@@ -234,27 +227,48 @@ def get_sections():
     zd_subdomain = st.session_state.get('zd_subdomain', '')
     include_restricted = st.session_state.get('include_restricted', True)
     
+    if not zd_subdomain:
+        st.error("Zendesk subdomain is required")
+        return []
+    
     endpoint = f"https://{zd_subdomain}.zendesk.com/api/v2/help_center/sections"
     add_log("Fetch Sections", "INFO", endpoint, details="Requesting sections from Zendesk")
     
     auth = get_zd_auth() if include_restricted else None
-    response = requests.get(endpoint, auth=auth)
     
-    if response.status_code == 200:
-        response_data = response.json()
-        sections = response_data.get('sections', [])
-        add_log("Fetch Sections", "SUCCESS", endpoint, None, response_data, f"Found {len(sections)} sections")
-        return sections
-    else:
-        error_response = {"status_code": response.status_code, "error": response.text}
-        add_log("Fetch Sections", "ERROR", endpoint, None, error_response, f"Status: {response.status_code}")
-        st.error(f"Failed to fetch sections: {response.text}")
+    try:
+        response = requests.get(endpoint, auth=auth, timeout=30)
+        
+        if response.status_code == 200:
+            response_data = response.json()
+            sections = response_data.get('sections', [])
+            add_log("Fetch Sections", "SUCCESS", endpoint, None, response_data, f"Found {len(sections)} sections")
+            return sections
+        elif response.status_code == 401:
+            error_msg = "Authentication failed. Please check your email and API token."
+            st.error(f"🔒 {error_msg}")
+            add_log("Fetch Sections", "ERROR", endpoint, None, {"status": 401, "error": error_msg})
+            return []
+        else:
+            error_response = {"status_code": response.status_code, "error": response.text}
+            add_log("Fetch Sections", "ERROR", endpoint, None, error_response, f"Status: {response.status_code}")
+            st.error(f"Failed to fetch sections (Status {response.status_code}): {response.text}")
+            return []
+            
+    except requests.exceptions.RequestException as e:
+        error_msg = f"Network error: {str(e)}"
+        st.error(error_msg)
+        add_log("Fetch Sections", "ERROR", endpoint, None, {"error": error_msg})
         return []
 
 def get_existing_knowledge_sources():
     """Fetch existing knowledge sources from Ada."""
     ada_subdomain = st.session_state.get('ada_subdomain', '')
     ada_api_token = st.session_state.get('ada_api_token', '')
+    
+    if not ada_subdomain or not ada_api_token:
+        st.error("Ada subdomain and API token are required")
+        return []
     
     endpoint = f"https://{ada_subdomain}.ada.support/api/v2/knowledge/sources/"
     add_log("Fetch Knowledge Sources", "INFO", endpoint, details="Requesting knowledge sources from Ada")
@@ -264,17 +278,29 @@ def get_existing_knowledge_sources():
         "Content-Type": "application/json"
     }
     
-    response = requests.get(endpoint, headers=headers)
-    
-    if response.status_code == 200:
-        response_data = response.json()
-        sources = response_data.get('data', [])
-        add_log("Fetch Knowledge Sources", "SUCCESS", endpoint, None, response_data, f"Found {len(sources)} knowledge sources")
-        return sources
-    else:
-        error_response = {"status_code": response.status_code, "error": response.text}
-        add_log("Fetch Knowledge Sources", "ERROR", endpoint, None, error_response, f"Status: {response.status_code}")
-        st.error(f"Failed to fetch knowledge sources. Status: {response.status_code}")
+    try:
+        response = requests.get(endpoint, headers=headers, timeout=30)
+        
+        if response.status_code == 200:
+            response_data = response.json()
+            sources = response_data.get('data', [])
+            add_log("Fetch Knowledge Sources", "SUCCESS", endpoint, None, response_data, f"Found {len(sources)} knowledge sources")
+            return sources
+        elif response.status_code == 401:
+            error_msg = "Authentication failed. Please check your Ada API token."
+            st.error(f"🔒 {error_msg}")
+            add_log("Fetch Knowledge Sources", "ERROR", endpoint, None, {"status": 401, "error": error_msg})
+            return []
+        else:
+            error_response = {"status_code": response.status_code, "error": response.text}
+            add_log("Fetch Knowledge Sources", "ERROR", endpoint, None, error_response, f"Status: {response.status_code}")
+            st.error(f"Failed to fetch knowledge sources (Status {response.status_code}): {response.text}")
+            return []
+            
+    except requests.exceptions.RequestException as e:
+        error_msg = f"Network error: {str(e)}"
+        st.error(error_msg)
+        add_log("Fetch Knowledge Sources", "ERROR", endpoint, None, {"error": error_msg})
         return []
 
 def generate_simple_id(length=15):
@@ -286,6 +312,10 @@ def create_knowledge_source_with_random_id(name):
     """Create a new knowledge source with user-provided name and simple random ID."""
     ada_subdomain = st.session_state.get('ada_subdomain', '')
     ada_api_token = st.session_state.get('ada_api_token', '')
+    
+    if not ada_subdomain or not ada_api_token:
+        st.error("Ada subdomain and API token are required")
+        return None
     
     knowledge_source_id = generate_simple_id(15)
     endpoint = f"https://{ada_subdomain}.ada.support/api/v2/knowledge/sources/"
@@ -302,31 +332,44 @@ def create_knowledge_source_with_random_id(name):
     
     add_log("Create Knowledge Source", "INFO", endpoint, payload, details=f"Creating source: {name}")
     
-    response = requests.post(endpoint, headers=headers, json=payload)
-    
-    if response.status_code in [200, 201]:
-        response_data = response.json()
-        add_log("Create Knowledge Source", "SUCCESS", endpoint, payload, response_data, f"Created: {name} (ID: {knowledge_source_id})")
+    try:
+        response = requests.post(endpoint, headers=headers, json=payload, timeout=30)
         
-        if 'data' in response_data and 'id' in response_data['data']:
-            return response_data['data']['id']
-        elif 'id' in response_data:
-            return response_data['id']
-        elif isinstance(response_data, dict) and 'data' in response_data:
-            return response_data['data'].get('id', knowledge_source_id)
+        if response.status_code in [200, 201]:
+            response_data = response.json()
+            add_log("Create Knowledge Source", "SUCCESS", endpoint, payload, response_data, f"Created: {name} (ID: {knowledge_source_id})")
+            
+            if 'data' in response_data and 'id' in response_data['data']:
+                return response_data['data']['id']
+            elif 'id' in response_data:
+                return response_data['id']
+            elif isinstance(response_data, dict) and 'data' in response_data:
+                return response_data['data'].get('id', knowledge_source_id)
+            else:
+                add_log("Create Knowledge Source", "WARNING", endpoint, payload, response_data, "Unexpected response structure, using generated ID")
+                return knowledge_source_id
+        elif response.status_code == 401:
+            error_msg = "Authentication failed. Please check your Ada API token."
+            st.error(f"🔒 {error_msg}")
+            add_log("Create Knowledge Source", "ERROR", endpoint, payload, {"status": 401, "error": error_msg})
+            return None
         else:
-            add_log("Create Knowledge Source", "WARNING", endpoint, payload, response_data, "Unexpected response structure, using generated ID")
-            return knowledge_source_id
-    else:
-        error_response = {"status_code": response.status_code, "error": response.text}
-        add_log("Create Knowledge Source", "ERROR", endpoint, payload, error_response, f"Status: {response.status_code}")
-        st.error(f"Failed to create knowledge source. Status: {response.status_code}, Response: {response.text}")
+            error_response = {"status_code": response.status_code, "error": response.text}
+            add_log("Create Knowledge Source", "ERROR", endpoint, payload, error_response, f"Status: {response.status_code}")
+            st.error(f"Failed to create knowledge source (Status {response.status_code}): {response.text}")
+            return None
+            
+    except requests.exceptions.RequestException as e:
+        error_msg = f"Network error: {str(e)}"
+        st.error(error_msg)
+        add_log("Create Knowledge Source", "ERROR", endpoint, payload, {"error": error_msg})
         return None
 
 # Article Fetching Functions
 def fetch_articles_with_filters(selected_locales=None, selected_brands=None, selected_categories=None):
     """Fetch articles with filters applied - only fetch what's specifically requested."""
     include_restricted = st.session_state.get('include_restricted', True)
+    published_only = st.session_state.get('published_only', False)
     
     all_articles = []
     auth = get_zd_auth() if include_restricted else None
@@ -338,6 +381,8 @@ def fetch_articles_with_filters(selected_locales=None, selected_brands=None, sel
         filter_parts.append(f"brands: {selected_brands}")
     if selected_categories:
         filter_parts.append(f"categories: {selected_categories}")
+    if published_only:
+        filter_parts.append("published articles only")
     filter_desc = ", ".join(filter_parts) if filter_parts else "no filters - will not fetch anything"
     
     if not selected_locales and not selected_brands and not selected_categories:
@@ -374,6 +419,14 @@ def fetch_articles_with_filters(selected_locales=None, selected_brands=None, sel
     if selected_categories and (selected_brands or selected_locales):
         all_articles = filter_by_categories(all_articles, selected_categories)
     
+    # Filter for published articles only if requested
+    if published_only:
+        before_count = len(all_articles)
+        all_articles = filter_published_articles(all_articles)
+        after_count = len(all_articles)
+        add_log("Filter Published", "INFO", details=f"Filtered {before_count} articles to {after_count} published articles")
+        st.info(f"📑 Filtered from {before_count} total articles to {after_count} published articles")
+    
     seen_ids = set()
     unique_articles = []
     for article in all_articles:
@@ -404,34 +457,41 @@ def fetch_brand_articles(brand, auth):
         params = {'page': page, 'per_page': 100}
         endpoint = f"{base_url}?{urllib.parse.urlencode(params)}"
         
-        response = requests.get(base_url, auth=auth, params=params)
-        time.sleep(RATE_LIMIT_DELAY)
-        
-        if response.status_code == 200:
-            data = response.json()
-            page_articles = data.get('articles', [])
+        try:
+            response = requests.get(base_url, auth=auth, params=params, timeout=30)
+            time.sleep(RATE_LIMIT_DELAY)
             
-            for article in page_articles:
-                article['_brand_name'] = brand['name']
-                article['_brand_id'] = brand['id']
-                article['_brand_subdomain'] = brand.get('subdomain', '')
-                article['_brand_url'] = brand_base_url
-            
-            articles.extend(page_articles)
-            
-            add_log("Fetch Brand Articles", "SUCCESS", endpoint, params, 
-                   {"articles_on_page": len(page_articles), "total_so_far": len(articles)},
-                   f"Brand: {brand['name']}, Page: {page}")
-            
-            if data.get('next_page'):
-                page += 1
+            if response.status_code == 200:
+                data = response.json()
+                page_articles = data.get('articles', [])
+                
+                for article in page_articles:
+                    article['_brand_name'] = brand['name']
+                    article['_brand_id'] = brand['id']
+                    article['_brand_subdomain'] = brand.get('subdomain', '')
+                    article['_brand_url'] = brand_base_url
+                
+                articles.extend(page_articles)
+                
+                add_log("Fetch Brand Articles", "SUCCESS", endpoint, params, 
+                       {"articles_on_page": len(page_articles), "total_so_far": len(articles)},
+                       f"Brand: {brand['name']}, Page: {page}")
+                
+                if data.get('next_page'):
+                    page += 1
+                else:
+                    break
             else:
+                error_response = {"status_code": response.status_code, "error": response.text}
+                add_log("Fetch Brand Articles", "ERROR", endpoint, params, error_response,
+                       f"Failed for brand: {brand['name']}")
+                st.error(f"Failed to fetch articles for brand '{brand['name']}' (Status {response.status_code}): {response.text}")
                 break
-        else:
-            error_response = {"status_code": response.status_code, "error": response.text}
-            add_log("Fetch Brand Articles", "ERROR", endpoint, params, error_response,
-                   f"Failed for brand: {brand['name']}")
-            st.error(f"Failed to fetch articles for brand '{brand['name']}': {response.text}")
+                
+        except requests.exceptions.RequestException as e:
+            error_msg = f"Network error for brand {brand['name']}: {str(e)}"
+            st.error(error_msg)
+            add_log("Fetch Brand Articles", "ERROR", endpoint, params, {"error": error_msg})
             break
     
     return articles
@@ -449,27 +509,34 @@ def fetch_locale_articles(locale, auth, zd_subdomain):
         params = {'page': page, 'per_page': 100}
         endpoint = f"{base_url}?{urllib.parse.urlencode(params)}"
         
-        response = requests.get(base_url, auth=auth, params=params)
-        time.sleep(RATE_LIMIT_DELAY)
-        
-        if response.status_code == 200:
-            data = response.json()
-            page_articles = data.get('articles', [])
-            articles.extend(page_articles)
+        try:
+            response = requests.get(base_url, auth=auth, params=params, timeout=30)
+            time.sleep(RATE_LIMIT_DELAY)
             
-            add_log("Fetch Locale Articles", "SUCCESS", endpoint, params,
-                   {"articles_on_page": len(page_articles), "total_so_far": len(articles)},
-                   f"Locale: {locale}, Page: {page}")
-            
-            if data.get('next_page'):
-                page += 1
+            if response.status_code == 200:
+                data = response.json()
+                page_articles = data.get('articles', [])
+                articles.extend(page_articles)
+                
+                add_log("Fetch Locale Articles", "SUCCESS", endpoint, params,
+                       {"articles_on_page": len(page_articles), "total_so_far": len(articles)},
+                       f"Locale: {locale}, Page: {page}")
+                
+                if data.get('next_page'):
+                    page += 1
+                else:
+                    break
             else:
+                error_response = {"status_code": response.status_code, "error": response.text}
+                add_log("Fetch Locale Articles", "ERROR", endpoint, params, error_response,
+                       f"Failed for locale: {locale}")
+                st.error(f"Failed to fetch articles for locale '{locale}' (Status {response.status_code}): {response.text}")
                 break
-        else:
-            error_response = {"status_code": response.status_code, "error": response.text}
-            add_log("Fetch Locale Articles", "ERROR", endpoint, params, error_response,
-                   f"Failed for locale: {locale}")
-            st.error(f"Failed to fetch articles for locale '{locale}': {response.text}")
+                
+        except requests.exceptions.RequestException as e:
+            error_msg = f"Network error for locale {locale}: {str(e)}"
+            st.error(error_msg)
+            add_log("Fetch Locale Articles", "ERROR", endpoint, params, {"error": error_msg})
             break
     
     return articles
@@ -490,34 +557,41 @@ def fetch_brand_locale_articles(brand, locale, auth):
         params = {'page': page, 'per_page': 100}
         endpoint = f"{base_url}?{urllib.parse.urlencode(params)}"
         
-        response = requests.get(base_url, auth=auth, params=params)
-        time.sleep(RATE_LIMIT_DELAY)
-        
-        if response.status_code == 200:
-            data = response.json()
-            page_articles = data.get('articles', [])
+        try:
+            response = requests.get(base_url, auth=auth, params=params, timeout=30)
+            time.sleep(RATE_LIMIT_DELAY)
             
-            for article in page_articles:
-                article['_brand_name'] = brand['name']
-                article['_brand_id'] = brand['id']
-                article['_brand_subdomain'] = brand.get('subdomain', '')
-                article['_brand_url'] = brand_base_url
-            
-            articles.extend(page_articles)
-            
-            add_log("Fetch Brand+Locale Articles", "SUCCESS", endpoint, params,
-                   {"articles_on_page": len(page_articles), "total_so_far": len(articles)},
-                   f"Brand: {brand['name']}, Locale: {locale}, Page: {page}")
-            
-            if data.get('next_page'):
-                page += 1
+            if response.status_code == 200:
+                data = response.json()
+                page_articles = data.get('articles', [])
+                
+                for article in page_articles:
+                    article['_brand_name'] = brand['name']
+                    article['_brand_id'] = brand['id']
+                    article['_brand_subdomain'] = brand.get('subdomain', '')
+                    article['_brand_url'] = brand_base_url
+                
+                articles.extend(page_articles)
+                
+                add_log("Fetch Brand+Locale Articles", "SUCCESS", endpoint, params,
+                       {"articles_on_page": len(page_articles), "total_so_far": len(articles)},
+                       f"Brand: {brand['name']}, Locale: {locale}, Page: {page}")
+                
+                if data.get('next_page'):
+                    page += 1
+                else:
+                    break
             else:
+                error_response = {"status_code": response.status_code, "error": response.text}
+                add_log("Fetch Brand+Locale Articles", "ERROR", endpoint, params, error_response,
+                       f"Failed for brand: {brand['name']}, locale: {locale}")
+                st.error(f"Failed to fetch articles for brand '{brand['name']}', locale '{locale}' (Status {response.status_code}): {response.text}")
                 break
-        else:
-            error_response = {"status_code": response.status_code, "error": response.text}
-            add_log("Fetch Brand+Locale Articles", "ERROR", endpoint, params, error_response,
-                   f"Failed for brand: {brand['name']}, locale: {locale}")
-            st.error(f"Failed to fetch articles for brand '{brand['name']}', locale '{locale}': {response.text}")
+                
+        except requests.exceptions.RequestException as e:
+            error_msg = f"Network error for brand {brand['name']}, locale {locale}: {str(e)}"
+            st.error(error_msg)
+            add_log("Fetch Brand+Locale Articles", "ERROR", endpoint, params, {"error": error_msg})
             break
     
     return articles
@@ -530,18 +604,23 @@ def fetch_all_articles_for_category_filter(auth, zd_subdomain):
     
     while True:
         params = {'page': page, 'per_page': 100}
-        response = requests.get(base_url, auth=auth, params=params)
-        time.sleep(RATE_LIMIT_DELAY)
-        
-        if response.status_code == 200:
-            data = response.json()
-            articles.extend(data.get('articles', []))
-            if data.get('next_page'):
-                page += 1
+        try:
+            response = requests.get(base_url, auth=auth, params=params, timeout=30)
+            time.sleep(RATE_LIMIT_DELAY)
+            
+            if response.status_code == 200:
+                data = response.json()
+                articles.extend(data.get('articles', []))
+                if data.get('next_page'):
+                    page += 1
+                else:
+                    break
             else:
+                st.error(f"Failed to fetch articles for category filtering (Status {response.status_code}): {response.text}")
                 break
-        else:
-            st.error(f"Failed to fetch articles for category filtering: {response.text}")
+                
+        except requests.exceptions.RequestException as e:
+            st.error(f"Network error while fetching articles for category filtering: {str(e)}")
             break
     return articles
 
@@ -620,6 +699,10 @@ def upload_articles_to_ada(formatted_articles):
     ada_subdomain = st.session_state.get('ada_subdomain', '')
     ada_api_token = st.session_state.get('ada_api_token', '')
     
+    if not ada_subdomain or not ada_api_token:
+        st.error("Ada subdomain and API token are required for upload")
+        return
+    
     headers = {
         "Authorization": f"Bearer {ada_api_token}",
         "Content-Type": "application/json"
@@ -639,25 +722,33 @@ def upload_articles_to_ada(formatted_articles):
             log_payload = [{**article, "content": article["content"][:100] + "..." if len(article["content"]) > 100 else article["content"]}]
             add_log("Upload Article", "INFO", endpoint, log_payload, details=f"Uploading article {i}/{len(articles)}: {article['name'][:40]}...")
             
-            response = requests.post(endpoint, headers=headers, json=payload)
-            time.sleep(RATE_LIMIT_DELAY)
-            
-            if response.status_code in [200, 201]:
-                success_count += 1
-                response_data = response.json()
-                add_log("Upload Article", "SUCCESS", endpoint, log_payload, response_data, f"({i}/{len(articles)}) {article['name'][:40]}...")
-                st.success(f"Successfully uploaded article {i}/{len(articles)}: '{article['name']}'")
-                break
-            elif response.status_code == 429:
-                error_response = {"status_code": response.status_code, "error": "Rate limited"}
-                add_log("Upload Article", "WARNING", endpoint, log_payload, error_response, f"Rate limited on article {i}")
-                st.warning(f"Rate limited while uploading article {i}. Retrying after delay...")
-                time.sleep(60)
-            else:
+            try:
+                response = requests.post(endpoint, headers=headers, json=payload, timeout=30)
+                time.sleep(RATE_LIMIT_DELAY)
+                
+                if response.status_code in [200, 201]:
+                    success_count += 1
+                    response_data = response.json()
+                    add_log("Upload Article", "SUCCESS", endpoint, log_payload, response_data, f"({i}/{len(articles)}) {article['name'][:40]}...")
+                    st.success(f"Successfully uploaded article {i}/{len(articles)}: '{article['name']}'")
+                    break
+                elif response.status_code == 429:
+                    error_response = {"status_code": response.status_code, "error": "Rate limited"}
+                    add_log("Upload Article", "WARNING", endpoint, log_payload, error_response, f"Rate limited on article {i}")
+                    st.warning(f"Rate limited while uploading article {i}. Retrying after delay...")
+                    time.sleep(60)
+                else:
+                    error_count += 1
+                    error_response = {"status_code": response.status_code, "error": response.text}
+                    add_log("Upload Article", "ERROR", endpoint, log_payload, error_response, f"({i}/{len(articles)}) {article['name'][:30]}...")
+                    st.error(f"Failed to upload article {i}: '{article['name']}'. Status: {response.status_code}")
+                    break
+                    
+            except requests.exceptions.RequestException as e:
                 error_count += 1
-                error_response = {"status_code": response.status_code, "error": response.text}
-                add_log("Upload Article", "ERROR", endpoint, log_payload, error_response, f"({i}/{len(articles)}) {article['name'][:30]}...")
-                st.error(f"Failed to upload article {i}: '{article['name']}'. Status: {response.status_code}")
+                error_msg = f"Network error uploading article {i}: {str(e)}"
+                st.error(error_msg)
+                add_log("Upload Article", "ERROR", endpoint, log_payload, {"error": error_msg})
                 break
     
     summary = {"success_count": success_count, "error_count": error_count, "total_articles": len(articles)}
@@ -668,149 +759,6 @@ st.title("Zendesk Article Management")
 st.write("This integration grabs articles from a Zendesk Help Center and pushes them to Ada API")
 
 init_logs()
-load_all_configs_to_session()
-
-# Configuration Management Section
-st.subheader("Configuration Management")
-st.write("💾 Configurations are saved to file and persist between sessions")
-
-col1, col2, col3 = st.columns(3)
-
-with col1:
-    config_name = st.text_input("Configuration Name", placeholder="e.g., Production Config", key="config_name_input")
-
-with col2:
-    if st.button("💾 Save Current Config", key="save_config_btn"):
-        if config_name:
-            config_data = {
-                "zd_subdomain": st.session_state.get('zd_subdomain', ''),
-                "zd_email": st.session_state.get('zd_email', ''),
-                "zd_token": st.session_state.get('zd_token', ''),
-                "ada_subdomain": st.session_state.get('ada_subdomain', ''),
-                "ada_api_token": st.session_state.get('ada_api_token', ''),
-                "include_restricted": st.session_state.get('include_restricted', True),
-                "saved_at": datetime.datetime.now().isoformat()
-            }
-            if save_configuration(config_name, config_data):
-                st.success(f"✅ Configuration '{config_name}' saved to file!")
-            else:
-                st.error("❌ Failed to save configuration")
-        else:
-            st.error("Please provide a configuration name")
-
-with col3:
-    saved_configs = get_saved_config_names()
-    if saved_configs:
-        selected_config = st.selectbox("📂 Load Saved Config", [""] + saved_configs, key="config_selector")
-        if st.button("📥 Load Config", key="load_config_btn") and selected_config:
-            config_data = load_configuration(selected_config)
-            if config_data:
-                st.session_state['zd_subdomain'] = config_data.get('zd_subdomain', '')
-                st.session_state['zd_email'] = config_data.get('zd_email', '')
-                st.session_state['zd_token'] = config_data.get('zd_token', '')
-                st.session_state['ada_subdomain'] = config_data.get('ada_subdomain', '')
-                st.session_state['ada_api_token'] = config_data.get('ada_api_token', '')
-                st.session_state['include_restricted'] = config_data.get('include_restricted', True)
-                st.success(f"✅ Configuration '{selected_config}' loaded!")
-                st.rerun()
-            else:
-                st.error("❌ Failed to load configuration")
-
-# Show config file location
-if os.path.exists(CONFIG_FILE):
-    file_path = os.path.abspath(CONFIG_FILE)
-    st.info(f"📁 Configurations saved in: `{file_path}`")
-
-# Manage saved configurations
-if saved_configs:
-    with st.expander("🗂️ Manage Saved Configurations"):
-        st.write(f"**Found {len(saved_configs)} saved configuration(s):**")
-        
-        for config in saved_configs:
-            col1, col2, col3 = st.columns([2, 1, 1])
-            with col1:
-                config_data = load_configuration(config)
-                saved_at = config_data.get('saved_at', 'Unknown')
-                if saved_at != 'Unknown':
-                    try:
-                        saved_date = datetime.datetime.fromisoformat(saved_at).strftime('%Y-%m-%d %H:%M')
-                    except:
-                        saved_date = saved_at
-                else:
-                    saved_date = 'Unknown'
-                
-                st.write(f"**{config}**")
-                st.write(f"🗓️ Saved: {saved_date}")
-                st.write(f"🌐 ZD: {config_data.get('zd_subdomain', 'Not set')}")
-                st.write(f"🤖 Ada: {config_data.get('ada_subdomain', 'Not set')}")
-            
-            with col2:
-                if st.button(f"📥 Load", key=f"load_config_{config}"):
-                    config_data = load_configuration(config)
-                    if config_data:
-                        st.session_state['zd_subdomain'] = config_data.get('zd_subdomain', '')
-                        st.session_state['zd_email'] = config_data.get('zd_email', '')
-                        st.session_state['zd_token'] = config_data.get('zd_token', '')
-                        st.session_state['ada_subdomain'] = config_data.get('ada_subdomain', '')
-                        st.session_state['ada_api_token'] = config_data.get('ada_api_token', '')
-                        st.session_state['include_restricted'] = config_data.get('include_restricted', True)
-                        st.success(f"Loaded '{config}'")
-                        st.rerun()
-            
-            with col3:
-                if st.button(f"🗑️ Delete", key=f"delete_config_{config}"):
-                    if delete_configuration(config):
-                        st.success(f"Deleted '{config}'")
-                        st.rerun()
-                    else:
-                        st.error(f"Failed to delete '{config}'")
-            
-            st.divider()
-        
-        # Export/Import functionality
-        st.subheader("📤📥 Export/Import Configurations")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            if st.button("📤 Export All Configs", key="export_configs_btn"):
-                try:
-                    if os.path.exists(CONFIG_FILE):
-                        with open(CONFIG_FILE, 'r') as f:
-                            configs_data = f.read()
-                        
-                        st.download_button(
-                            label="💾 Download Configurations",
-                            data=configs_data,
-                            file_name=f"zendesk_ada_configs_backup_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-                            mime="application/json",
-                            key="download_configs_btn"
-                        )
-                except Exception as e:
-                    st.error(f"Export failed: {str(e)}")
-        
-        with col2:
-            uploaded_file = st.file_uploader("📁 Import Configurations", type="json", key="import_configs_upload")
-            if uploaded_file is not None:
-                try:
-                    imported_configs = json.load(uploaded_file)
-                    
-                    existing_configs = {}
-                    if os.path.exists(CONFIG_FILE):
-                        with open(CONFIG_FILE, 'r') as f:
-                            existing_configs = json.load(f)
-                    
-                    existing_configs.update(imported_configs)
-                    
-                    with open(CONFIG_FILE, 'w') as f:
-                        json.dump(existing_configs, f, indent=2)
-                    
-                    load_all_configs_to_session()
-                    st.success(f"✅ Imported {len(imported_configs)} configuration(s)!")
-                    st.rerun()
-                    
-                except Exception as e:
-                    st.error(f"Import failed: {str(e)}")
 
 # Zendesk Configuration
 st.subheader("Zendesk Configuration")
@@ -826,15 +774,39 @@ st.text_input("Ada Knowledge API Token", type="password", key='ada_api_token')
 # Access Options
 st.subheader("Access Options")
 st.checkbox("Include articles behind login", key='include_restricted')
+st.checkbox("📑 Published articles only", key='published_only', help="Only fetch and upload published articles (not drafts)")
 
 # Get values from session state
 include_restricted = st.session_state.get('include_restricted', True)
+published_only = st.session_state.get('published_only', False)
 zd_email = st.session_state.get('zd_email', '')
 zd_token = st.session_state.get('zd_token', '')
 zd_subdomain = st.session_state.get('zd_subdomain', '')
 
 if include_restricted and (not zd_email or not zd_token):
     st.warning("⚠️ Zendesk email and API token required for restricted articles")
+
+if published_only:
+    st.info("📑 Only published articles will be fetched and uploaded (drafts will be excluded)")
+
+# Debug Section
+with st.expander("🔍 Debug Information"):
+    st.write("**Current Configuration:**")
+    st.write(f"ZD Subdomain: {st.session_state.get('zd_subdomain', 'Not set')}")
+    st.write(f"ZD Email: {st.session_state.get('zd_email', 'Not set')}")
+    st.write(f"ZD Token: {'Set' if st.session_state.get('zd_token') else 'Not set'}")
+    st.write(f"Ada Subdomain: {st.session_state.get('ada_subdomain', 'Not set')}")
+    st.write(f"Ada Token: {'Set' if st.session_state.get('ada_api_token') else 'Not set'}")
+    st.write(f"Include Restricted: {st.session_state.get('include_restricted', False)}")
+    st.write(f"Published Only: {st.session_state.get('published_only', False)}")
+    
+    # Test authentication
+    auth = get_zd_auth()
+    if auth:
+        st.success("✅ Zendesk authentication object created")
+        st.write(f"Auth username: {auth.username}")
+    else:
+        st.error("❌ No Zendesk authentication available")
 
 # Filter options
 st.subheader("Filtering Options")
@@ -989,6 +961,9 @@ if can_fetch:
         cat_names = [name for name, cat_id in [(cat['name'], cat['id']) for cat in st.session_state.get('categories', [])] if cat_id in selected_categories]
         filter_summary.append(f"Categories: {', '.join(cat_names)}")
     
+    if published_only:
+        filter_summary.append("Published articles only")
+    
     if filter_summary:
         st.info(f"**Active filters:** {' | '.join(filter_summary)}")
     else:
@@ -1033,8 +1008,10 @@ if 'fetched_articles' in st.session_state:
         st.metric("Sections", len(sections))
     
     with col4:
-        published = sum(1 for article in articles if article.get('draft', True) is False)
+        published = sum(1 for article in articles if not article.get('draft', True))
+        drafts = sum(1 for article in articles if article.get('draft', True))
         st.metric("Published", published)
+        st.caption(f"Drafts: {drafts}")
     
     with st.expander("📋 Article Details", expanded=False):
         search_term = st.text_input("🔍 Search articles", placeholder="Search by title...", key="article_search")
@@ -1052,7 +1029,11 @@ if 'fetched_articles' in st.session_state:
             with st.container():
                 col1, col2 = st.columns([4, 1])
                 with col1:
-                    st.write(f"**{i+1}. {article.get('title', 'No Title')}**")
+                    # Show publish status
+                    status_icon = "✅" if not article.get('draft', True) else "📝"
+                    status_text = "Published" if not article.get('draft', True) else "Draft"
+                    
+                    st.write(f"**{i+1}. {article.get('title', 'No Title')}** {status_icon} {status_text}")
                     brand_display = article.get('_brand_name', article.get('brand_id', 'N/A'))
                     brand_url = article.get('_brand_url', 'N/A')
                     st.write(f"🌐 Locale: {article.get('locale', 'N/A')} | 🏢 Brand: {brand_display} | 📂 Section: {article.get('section_id', 'N/A')}")
