@@ -144,21 +144,21 @@ def get_locales():
         return [DEFAULT_LANGUAGE]
 
 def get_categories():
-    """Fetch available categories from Zendesk."""
+    """Fetch available categories from Zendesk Help Center (optional)."""
     zd_subdomain = st.session_state.get('zd_subdomain', '')
     zd_email = st.session_state.get('zd_email', '')
     zd_token = st.session_state.get('zd_token', '')
     
     if not zd_subdomain:
-        st.error("❌ Zendesk subdomain is required")
+        st.warning("⚠️ Zendesk subdomain is required for categories")
         return []
     
     if not zd_email or not zd_token:
-        st.error("❌ Zendesk email and API token are required")
+        st.warning("⚠️ Zendesk email and API token are required for categories")
         return []
     
     endpoint = f"https://{zd_subdomain}.zendesk.com/api/v2/help_center/categories"
-    add_log("Fetch Categories", "INFO", endpoint, details="Requesting categories from Zendesk")
+    add_log("Fetch Categories", "INFO", endpoint, details="Requesting categories from Zendesk Help Center")
     
     auth = HTTPBasicAuth(f"{zd_email}/token", zd_token)
     
@@ -169,21 +169,35 @@ def get_categories():
             response_data = response.json()
             categories = response_data.get('categories', [])
             add_log("Fetch Categories", "SUCCESS", endpoint, None, response_data, f"Found {len(categories)} categories")
+            if categories:
+                st.info(f"✅ Found {len(categories)} Help Center categories")
+            else:
+                st.info("ℹ️ No Help Center categories found")
             return categories
         elif response.status_code == 401:
             error_msg = "❌ Authentication failed. Please check your Zendesk email and API token."
             st.error(error_msg)
             add_log("Fetch Categories", "ERROR", endpoint, None, {"status": 401, "error": error_msg})
             return []
+        elif response.status_code == 404:
+            warning_msg = "⚠️ Help Center categories not found. This may mean:\n• Help Center is not enabled for your Zendesk instance\n• No categories have been created yet\n• Your plan doesn't include Help Center"
+            st.warning(warning_msg)
+            add_log("Fetch Categories", "WARNING", endpoint, None, {"status": 404, "error": "Help Center not found"}, "Help Center categories not available")
+            return []
+        elif response.status_code == 403:
+            warning_msg = "⚠️ Access to Help Center categories is forbidden. Your account may not have the required permissions."
+            st.warning(warning_msg)
+            add_log("Fetch Categories", "WARNING", endpoint, None, {"status": 403, "error": "Access forbidden"}, "No permission for Help Center categories")
+            return []
         else:
-            error_response = {"status_code": response.status_code, "error": response.text}
+            error_response = {"status_code": response.status_code, "error": response.text[:200]}
             add_log("Fetch Categories", "ERROR", endpoint, None, error_response, f"Status: {response.status_code}")
-            st.error(f"❌ Failed to fetch categories (Status {response.status_code}): {response.text}")
+            st.warning(f"⚠️ Could not fetch Help Center categories (Status {response.status_code}). Category filtering will not be available.")
             return []
             
     except requests.exceptions.RequestException as e:
         error_msg = f"❌ Network error: {str(e)}"
-        st.error(error_msg)
+        st.warning(f"⚠️ Could not connect to Help Center categories endpoint: {str(e)}")
         add_log("Fetch Categories", "ERROR", endpoint, None, {"error": error_msg})
         return []
 
@@ -248,21 +262,21 @@ def get_brands():
         return []
 
 def get_sections():
-    """Fetch available sections from Zendesk."""
+    """Fetch available sections from Zendesk Help Center (optional)."""
     zd_subdomain = st.session_state.get('zd_subdomain', '')
     zd_email = st.session_state.get('zd_email', '')
     zd_token = st.session_state.get('zd_token', '')
     
     if not zd_subdomain:
-        st.error("❌ Zendesk subdomain is required")
+        st.warning("⚠️ Zendesk subdomain is required for sections")
         return []
     
     if not zd_email or not zd_token:
-        st.error("❌ Zendesk email and API token are required")
+        st.warning("⚠️ Zendesk email and API token are required for sections")
         return []
     
     endpoint = f"https://{zd_subdomain}.zendesk.com/api/v2/help_center/sections"
-    add_log("Fetch Sections", "INFO", endpoint, details="Requesting sections from Zendesk")
+    add_log("Fetch Sections", "INFO", endpoint, details="Requesting sections from Zendesk Help Center")
     
     auth = HTTPBasicAuth(f"{zd_email}/token", zd_token)
     
@@ -273,21 +287,30 @@ def get_sections():
             response_data = response.json()
             sections = response_data.get('sections', [])
             add_log("Fetch Sections", "SUCCESS", endpoint, None, response_data, f"Found {len(sections)} sections")
+            if sections:
+                st.info(f"✅ Found {len(sections)} Help Center sections")
+            else:
+                st.info("ℹ️ No Help Center sections found")
             return sections
         elif response.status_code == 401:
             error_msg = "❌ Authentication failed. Please check your Zendesk email and API token."
             st.error(error_msg)
             add_log("Fetch Sections", "ERROR", endpoint, None, {"status": 401, "error": error_msg})
             return []
+        elif response.status_code == 404:
+            warning_msg = "⚠️ Help Center sections not found. Help Center may not be enabled."
+            st.warning(warning_msg)
+            add_log("Fetch Sections", "WARNING", endpoint, None, {"status": 404, "error": "Help Center not found"}, "Help Center sections not available")
+            return []
         else:
-            error_response = {"status_code": response.status_code, "error": response.text}
-            add_log("Fetch Sections", "ERROR", endpoint, None, error_response, f"Status: {response.status_code}")
-            st.error(f"❌ Failed to fetch sections (Status {response.status_code}): {response.text}")
+            error_response = {"status_code": response.status_code, "error": response.text[:200]}
+            add_log("Fetch Sections", "WARNING", endpoint, None, error_response, f"Status: {response.status_code}")
+            st.warning(f"⚠️ Could not fetch Help Center sections (Status {response.status_code}). Section-based filtering may not work.")
             return []
             
     except requests.exceptions.RequestException as e:
         error_msg = f"❌ Network error: {str(e)}"
-        st.error(error_msg)
+        st.warning(f"⚠️ Could not connect to Help Center sections endpoint: {str(e)}")
         add_log("Fetch Sections", "ERROR", endpoint, None, {"error": error_msg})
         return []
 
@@ -659,10 +682,17 @@ def fetch_all_articles_for_category_filter(auth, zd_subdomain):
 
 def filter_by_categories(articles, selected_categories):
     """Filter articles by category."""
+    if not selected_categories:
+        return articles
+        
+    if 'sections' not in st.session_state or not st.session_state['sections']:
+        st.warning("⚠️ Cannot filter by categories: sections data not available")
+        return articles
+        
     filtered_articles = []
     for article in articles:
         article_section_id = article.get('section_id')
-        if article_section_id and 'sections' in st.session_state:
+        if article_section_id:
             for section in st.session_state['sections']:
                 if section['id'] == article_section_id:
                     if section.get('category_id') in selected_categories:
@@ -670,9 +700,9 @@ def filter_by_categories(articles, selected_categories):
                         break
     return filtered_articles
 
-def format_articles_for_ada(articles, knowledge_source_id):
+def format_articles_for_ada(articles, knowledge_source_id, override_language=None):
     """Format articles for Ada with proper field mapping and corrected URLs."""
-    add_log("Format Articles", "INFO", details=f"Formatting {len(articles)} articles")
+    add_log("Format Articles", "INFO", details=f"Formatting {len(articles)} articles with language override: {override_language}")
     
     formatted_articles = []
     converter = html2text.HTML2Text()
@@ -685,6 +715,14 @@ def format_articles_for_ada(articles, knowledge_source_id):
         zd_body = article.get("body", "")
         zd_html_url = article.get("html_url", "")
         zd_locale = article.get("locale", "en")
+        
+        # Determine language to use in Ada payload
+        if override_language:
+            # Use user-specified language
+            ada_language = override_language.lower()
+        else:
+            # Use language from Zendesk article
+            ada_language = zd_locale.lower() if zd_locale else "en"
         
         # Fix the URL to use the correct brand domain
         corrected_url = zd_html_url
@@ -719,12 +757,13 @@ def format_articles_for_ada(articles, knowledge_source_id):
             "knowledge_source_id": knowledge_source_id,
             "url": corrected_url,
             "tag_ids": [],
-            "language": zd_locale.lower() if zd_locale else "en"
+            "language": ada_language
         }
         
         formatted_articles.append(ada_article)
     
-    add_log("Format Articles", "SUCCESS", details=f"Formatted {len(formatted_articles)} articles, skipped {skipped_count}")
+    language_desc = f"override: {override_language}" if override_language else "from Zendesk"
+    add_log("Format Articles", "SUCCESS", details=f"Formatted {len(formatted_articles)} articles, skipped {skipped_count}, language: {language_desc}")
     return {"articles": formatted_articles}
 
 def upload_articles_to_ada(formatted_articles):
@@ -886,18 +925,25 @@ with col1:
             with st.spinner("Loading filter options..."):
                 locales = get_locales()
                 brands = get_brands()
-                categories = get_categories()
-                sections = get_sections()
+                categories = get_categories()  # This will now handle 404 gracefully
+                sections = get_sections()     # This will now handle 404 gracefully
                 
                 st.session_state['locales'] = locales
                 st.session_state['brands'] = brands
                 st.session_state['categories'] = categories
                 st.session_state['sections'] = sections
                 
-                if brands or locales or categories:
-                    st.success("✅ Filter options loaded successfully!")
+                # Show summary of what was loaded
+                loaded_items = []
+                if locales: loaded_items.append(f"{len(locales)} locales")
+                if brands: loaded_items.append(f"{len(brands)} brands")
+                if categories: loaded_items.append(f"{len(categories)} categories")
+                if sections: loaded_items.append(f"{len(sections)} sections")
+                
+                if loaded_items:
+                    st.success(f"✅ Loaded: {', '.join(loaded_items)}")
                 else:
-                    st.error("❌ No filter options loaded. Check your credentials and permissions.")
+                    st.warning("⚠️ No filter options loaded. Check your configuration.")
         else:
             st.error("❌ Please provide complete Zendesk configuration first")
     
@@ -910,7 +956,7 @@ with col2:
     selected_categories = None
     
     # Locale Filter
-    if 'locales' in st.session_state:
+    if 'locales' in st.session_state and st.session_state['locales']:
         use_locale_filter = st.checkbox("Enable Locale Filter", key="use_locale_filter")
         if use_locale_filter:
             locale_options = st.session_state['locales']
@@ -923,10 +969,12 @@ with col2:
             if locale_selections:
                 selected_locales = locale_selections
         else:
-            st.info("Locale filter disabled - will not fetch by locale")
+            st.info("Locale filter disabled")
+    elif 'locales' in st.session_state:
+        st.info("No locales available for filtering")
     
     # Brand Filter
-    if 'brands' in st.session_state:
+    if 'brands' in st.session_state and st.session_state['brands']:
         use_brand_filter = st.checkbox("Enable Brand Filter", key="use_brand_filter")
         if use_brand_filter:
             brand_options = [(brand['name'], brand['id']) for brand in st.session_state['brands']]
@@ -939,10 +987,12 @@ with col2:
             if selected_brand_names:
                 selected_brands = [brand_id for name, brand_id in brand_options if name in selected_brand_names]
         else:
-            st.info("Brand filter disabled - will not fetch by brand")
+            st.info("Brand filter disabled")
+    elif 'brands' in st.session_state:
+        st.info("No brands available for filtering")
     
     # Category Filter
-    if 'categories' in st.session_state:
+    if 'categories' in st.session_state and st.session_state['categories']:
         use_category_filter = st.checkbox("Enable Category Filter", key="use_category_filter")
         if use_category_filter:
             category_options = [(cat['name'], cat['id']) for cat in st.session_state['categories']]
@@ -955,7 +1005,9 @@ with col2:
             if selected_category_names:
                 selected_categories = [cat_id for name, cat_id in category_options if name in selected_category_names]
         else:
-            st.info("Category filter disabled - will not fetch by category")
+            st.info("Category filter disabled")
+    elif 'categories' in st.session_state:
+        st.info("No categories available for filtering")
 
 # Brand-Subdomain Mapping Table
 if 'brands' in st.session_state and st.session_state['brands']:
@@ -1188,13 +1240,58 @@ if 'fetched_articles' in st.session_state:
             else:
                 st.error("❌ Please provide knowledge source name and Ada configuration")
 
+    # Language Override Section
+    if selected_source_id:
+        st.subheader("🌐 Language Configuration")
+        st.write("Configure the language for articles in Ada")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            use_language_override = st.checkbox("Override language for Ada", key="use_language_override", 
+                                              help="If enabled, all articles will use the specified language instead of their Zendesk language")
+        
+        with col2:
+            override_language = None
+            if use_language_override:
+                # Common language options
+                language_options = [
+                    "en", "es", "fr", "de", "it", "pt", "nl", "ja", "ko", "zh", "ru", "ar", "hi", "th", "vi"
+                ]
+                override_language = st.selectbox(
+                    "Select language code:",
+                    options=language_options,
+                    help="IETF language code (e.g., 'en' for English, 'es' for Spanish)",
+                    key="language_override_select"
+                )
+            else:
+                st.info("Using language from Zendesk articles")
+        
+        # Show language preview
+        if st.session_state['fetched_articles']:
+            with st.expander("🔍 Language Preview"):
+                sample_articles = st.session_state['fetched_articles'][:5]
+                st.write("**Language mapping for first 5 articles:**")
+                
+                for i, article in enumerate(sample_articles, 1):
+                    zd_language = article.get('locale', 'en')
+                    ada_language = override_language if use_language_override else zd_language
+                    
+                    st.write(f"{i}. **{article.get('title', 'No Title')[:50]}{'...' if len(article.get('title', '')) > 50 else ''}**")
+                    st.write(f"   📍 Zendesk: `{zd_language}` → 🎯 Ada: `{ada_language}`")
+
     # Ada Payload Preview
     if selected_source_id:
         st.subheader("👀 Ada Payload Preview")
         st.write("Preview of how articles will be formatted for Ada API")
         
+        # Get language override value
+        override_lang = None
+        if st.session_state.get('use_language_override', False):
+            override_lang = st.session_state.get('language_override_select', None)
+        
         sample_articles = st.session_state['fetched_articles'][:3]
-        formatted_sample = format_articles_for_ada(sample_articles, selected_source_id)
+        formatted_sample = format_articles_for_ada(sample_articles, selected_source_id, override_lang)
         
         with st.expander("Sample Ada API Payload (first 3 articles)"):
             payload_preview = []
@@ -1217,9 +1314,11 @@ if 'fetched_articles' in st.session_state:
         with col3:
             languages = set(article['language'] for article in formatted_sample['articles'])
             st.metric("Languages", len(languages))
+            if override_lang:
+                st.caption(f"Override: {override_lang}")
         
         if st.button("📥 Download Full Ada Payload as JSON", key="download_ada_payload_btn"):
-            full_formatted = format_articles_for_ada(st.session_state['fetched_articles'], selected_source_id)
+            full_formatted = format_articles_for_ada(st.session_state['fetched_articles'], selected_source_id, override_lang)
             payload_json = json.dumps(full_formatted['articles'], indent=2)
             st.download_button(
                 label="Download Payload JSON",
@@ -1232,11 +1331,17 @@ if 'fetched_articles' in st.session_state:
         upload_ready = 'fetched_articles' in st.session_state and selected_source_id
         if st.button('🚀 Upload Articles to Ada', disabled=not upload_ready, key="upload_articles_btn"):
             with st.spinner("Uploading articles to Ada..."):
-                formatted_articles = format_articles_for_ada(st.session_state['fetched_articles'], selected_source_id)
+                # Get language override for upload
+                final_override_lang = None
+                if st.session_state.get('use_language_override', False):
+                    final_override_lang = st.session_state.get('language_override_select', None)
+                
+                formatted_articles = format_articles_for_ada(st.session_state['fetched_articles'], selected_source_id, final_override_lang)
                 upload_articles_to_ada(formatted_articles)
                 total_uploaded = len(formatted_articles['articles'])
                 
-                st.success(f"🎉 Upload completed! Total articles uploaded: {total_uploaded}")
+                language_msg = f" with language override: {final_override_lang}" if final_override_lang else " using Zendesk languages"
+                st.success(f"🎉 Upload completed! Total articles uploaded: {total_uploaded}{language_msg}")
                 
                 if 'fetched_articles' in st.session_state:
                     del st.session_state['fetched_articles']
