@@ -76,6 +76,12 @@ def get_zd_auth():
         return None
     return HTTPBasicAuth(f"{zd_email}/token", zd_token)
 
+def has_zd_credentials():
+    """Check if Zendesk credentials are provided."""
+    zd_email = st.session_state.get('zd_email', '')
+    zd_token = st.session_state.get('zd_token', '')
+    return bool(zd_email and zd_token)
+
 def get_brand_base_url(brand):
     """Get the correct base URL for a brand's Help Center API."""
     if brand.get('host_mapping'):
@@ -101,21 +107,16 @@ def filter_published_articles(articles):
 def get_locales():
     """Fetch available locales from Zendesk."""
     zd_subdomain = st.session_state.get('zd_subdomain', '')
-    zd_email = st.session_state.get('zd_email', '')
-    zd_token = st.session_state.get('zd_token', '')
     
     if not zd_subdomain:
         st.error("❌ Zendesk subdomain is required")
         return [DEFAULT_LANGUAGE]
     
-    if not zd_email or not zd_token:
-        st.error("❌ Zendesk email and API token are required")
-        return [DEFAULT_LANGUAGE]
-    
+    # Try without authentication first
     endpoint = f"https://{zd_subdomain}.zendesk.com/api/v2/locales"
     add_log("Fetch Locales", "INFO", endpoint, details="Requesting locales from Zendesk")
     
-    auth = HTTPBasicAuth(f"{zd_email}/token", zd_token)
+    auth = get_zd_auth()  # This might be None if no credentials
     
     try:
         response = requests.get(endpoint, auth=auth, timeout=30)
@@ -127,10 +128,15 @@ def get_locales():
             add_log("Fetch Locales", "SUCCESS", endpoint, None, response_data, f"Found {len(result)} locales")
             return result
         elif response.status_code == 401:
-            error_msg = "❌ Authentication failed. Please check your Zendesk email and API token."
-            st.error(error_msg)
-            add_log("Fetch Locales", "ERROR", endpoint, None, {"status": 401, "error": error_msg})
-            return [DEFAULT_LANGUAGE]
+            if auth is None:
+                # If no auth provided, return default
+                add_log("Fetch Locales", "INFO", endpoint, None, {"status": 401, "note": "No auth provided, using default"})
+                return [DEFAULT_LANGUAGE]
+            else:
+                error_msg = "❌ Authentication failed. Please check your Zendesk email and API token."
+                st.error(error_msg)
+                add_log("Fetch Locales", "ERROR", endpoint, None, {"status": 401, "error": error_msg})
+                return [DEFAULT_LANGUAGE]
         else:
             error_response = {"status_code": response.status_code, "error": response.text}
             add_log("Fetch Locales", "ERROR", endpoint, None, error_response, f"Status: {response.status_code}")
@@ -144,23 +150,21 @@ def get_locales():
         return [DEFAULT_LANGUAGE]
 
 def get_categories():
-    """Fetch available categories from Zendesk Help Center (optional)."""
+    """Fetch available categories from Zendesk Help Center (requires authentication)."""
+    if not has_zd_credentials():
+        add_log("Fetch Categories", "INFO", details="No credentials provided - skipping categories")
+        return []
+    
     zd_subdomain = st.session_state.get('zd_subdomain', '')
-    zd_email = st.session_state.get('zd_email', '')
-    zd_token = st.session_state.get('zd_token', '')
     
     if not zd_subdomain:
         st.warning("⚠️ Zendesk subdomain is required for categories")
         return []
     
-    if not zd_email or not zd_token:
-        st.warning("⚠️ Zendesk email and API token are required for categories")
-        return []
-    
     endpoint = f"https://{zd_subdomain}.zendesk.com/api/v2/help_center/categories"
     add_log("Fetch Categories", "INFO", endpoint, details="Requesting categories from Zendesk Help Center")
     
-    auth = HTTPBasicAuth(f"{zd_email}/token", zd_token)
+    auth = get_zd_auth()
     
     try:
         response = requests.get(endpoint, auth=auth, timeout=30)
@@ -202,32 +206,24 @@ def get_categories():
         return []
 
 def get_brands():
-    """Fetch available brands from Zendesk."""
+    """Fetch available brands from Zendesk (requires authentication)."""
+    if not has_zd_credentials():
+        add_log("Fetch Brands", "INFO", details="No credentials provided - skipping brands")
+        return []
+    
     zd_subdomain = st.session_state.get('zd_subdomain', '')
-    zd_email = st.session_state.get('zd_email', '')
-    zd_token = st.session_state.get('zd_token', '')
     
     if not zd_subdomain:
         st.error("❌ Zendesk subdomain is required")
         return []
     
-    if not zd_email or not zd_token:
-        st.error("❌ Zendesk email and API token are required for fetching brands")
-        return []
-    
     endpoint = f"https://{zd_subdomain}.zendesk.com/api/v2/brands"
-    add_log("Fetch Brands", "INFO", endpoint, details=f"Requesting brands from Zendesk with user: {zd_email}")
+    add_log("Fetch Brands", "INFO", endpoint, details=f"Requesting brands from Zendesk")
     
-    # Always use authentication for brands endpoint
-    auth = HTTPBasicAuth(f"{zd_email}/token", zd_token)
+    auth = get_zd_auth()
     
     try:
         response = requests.get(endpoint, auth=auth, timeout=30)
-        
-        add_log("Authentication Debug", "INFO", endpoint, 
-               {"email": zd_email, "token_length": len(zd_token) if zd_token else 0}, 
-               {"status_code": response.status_code}, 
-               f"Auth attempt for {zd_email}")
         
         if response.status_code == 200:
             response_data = response.json()
@@ -262,23 +258,21 @@ def get_brands():
         return []
 
 def get_sections():
-    """Fetch available sections from Zendesk Help Center (optional)."""
+    """Fetch available sections from Zendesk Help Center (requires authentication)."""
+    if not has_zd_credentials():
+        add_log("Fetch Sections", "INFO", details="No credentials provided - skipping sections")
+        return []
+    
     zd_subdomain = st.session_state.get('zd_subdomain', '')
-    zd_email = st.session_state.get('zd_email', '')
-    zd_token = st.session_state.get('zd_token', '')
     
     if not zd_subdomain:
         st.warning("⚠️ Zendesk subdomain is required for sections")
         return []
     
-    if not zd_email or not zd_token:
-        st.warning("⚠️ Zendesk email and API token are required for sections")
-        return []
-    
     endpoint = f"https://{zd_subdomain}.zendesk.com/api/v2/help_center/sections"
     add_log("Fetch Sections", "INFO", endpoint, details="Requesting sections from Zendesk Help Center")
     
-    auth = HTTPBasicAuth(f"{zd_email}/token", zd_token)
+    auth = get_zd_auth()
     
     try:
         response = requests.get(endpoint, auth=auth, timeout=30)
@@ -426,10 +420,6 @@ def fetch_articles_with_filters(selected_locales=None, selected_brands=None, sel
     all_articles = []
     auth = get_zd_auth()
     
-    if not auth:
-        st.error("❌ Zendesk authentication is required to fetch articles")
-        return []
-    
     filter_parts = []
     if selected_locales:
         filter_parts.append(f"locales: {selected_locales}")
@@ -451,6 +441,9 @@ def fetch_articles_with_filters(selected_locales=None, selected_brands=None, sel
         selected_brand_objects = [brand for brand in st.session_state['brands'] if brand['id'] in selected_brands]
     
     if selected_brands and not selected_locales:
+        if not auth:
+            st.error("❌ Zendesk authentication is required to fetch articles by brand")
+            return []
         for brand in selected_brand_objects:
             articles = fetch_brand_articles(brand, auth)
             all_articles.extend(articles)
@@ -462,12 +455,18 @@ def fetch_articles_with_filters(selected_locales=None, selected_brands=None, sel
             all_articles.extend(articles)
             
     elif selected_brands and selected_locales:
+        if not auth:
+            st.error("❌ Zendesk authentication is required to fetch articles by brand")
+            return []
         for brand in selected_brand_objects:
             for locale in selected_locales:
                 articles = fetch_brand_locale_articles(brand, locale, auth)
                 all_articles.extend(articles)
                 
     elif selected_categories and not selected_brands and not selected_locales:
+        if not auth:
+            st.error("❌ Zendesk authentication is required to fetch articles by category")
+            return []
         zd_subdomain = st.session_state.get('zd_subdomain', '')
         articles = fetch_all_articles_for_category_filter(auth, zd_subdomain)
         all_articles = filter_by_categories(articles, selected_categories)
@@ -709,12 +708,22 @@ def format_articles_for_ada(articles, knowledge_source_id, override_language=Non
     converter.ignore_links = False
     skipped_count = 0
 
+    # Get prefix settings
+    use_prefix = st.session_state.get('use_article_prefix', False)
+    article_prefix = st.session_state.get('article_prefix', '')
+
     for article in articles:
         zd_id = article.get("id")
         zd_title = article.get("title", "")
         zd_body = article.get("body", "")
         zd_html_url = article.get("html_url", "")
         zd_locale = article.get("locale", "en")
+        
+        # Apply prefix to title if enabled
+        if use_prefix and article_prefix.strip():
+            final_title = f"{article_prefix.strip()}{zd_title}"
+        else:
+            final_title = zd_title
         
         # Determine language to use in Ada payload
         if override_language and override_language.strip():
@@ -747,23 +756,24 @@ def format_articles_for_ada(articles, knowledge_source_id, override_language=Non
         
         if not check_article_size(markdown_content):
             skipped_count += 1
-            add_log("Format Articles", "WARNING", details=f"Article '{zd_title[:30]}...' exceeds 100KB, skipped")
+            add_log("Format Articles", "WARNING", details=f"Article '{final_title[:30]}...' exceeds 100KB, skipped")
             continue
 
         ada_article = {
-    "id": f"zd_{zd_id}-{zd_locale}",  # Include locale in ID
-    "name": zd_title[:255],
-    "content": markdown_content,
-    "knowledge_source_id": knowledge_source_id,
-    "url": corrected_url,
-    "tag_ids": [],
-    "language": ada_language
-}
+            "id": f"zd_{zd_id}-{zd_locale}",  # Include locale in ID
+            "name": final_title[:255],  # Apply prefix and truncate
+            "content": markdown_content,
+            "knowledge_source_id": knowledge_source_id,
+            "url": corrected_url,
+            "tag_ids": [],
+            "language": ada_language
+        }
         
         formatted_articles.append(ada_article)
     
     language_desc = f"override: {override_language}" if override_language and override_language.strip() else "from Zendesk"
-    add_log("Format Articles", "SUCCESS", details=f"Formatted {len(formatted_articles)} articles, skipped {skipped_count}, language: {language_desc}")
+    prefix_desc = f"with prefix: '{article_prefix}'" if use_prefix and article_prefix.strip() else "no prefix"
+    add_log("Format Articles", "SUCCESS", details=f"Formatted {len(formatted_articles)} articles, skipped {skipped_count}, language: {language_desc}, {prefix_desc}")
     return {"articles": formatted_articles}
 
 def upload_articles_to_ada(formatted_articles):
@@ -835,8 +845,8 @@ init_logs()
 # Zendesk Configuration
 st.subheader("🔧 Zendesk Configuration")
 st.text_input("Zendesk Subdomain (e.g., paulaschoice)", key='zd_subdomain', help="Your Zendesk subdomain without .zendesk.com")
-st.text_input("Zendesk Email", key='zd_email', help="Your Zendesk admin/agent email address")
-st.text_input("Zendesk API Token", type="password", key='zd_token', help="Your Zendesk API token from Admin Settings > API")
+st.text_input("Zendesk Email (optional)", key='zd_email', help="Your Zendesk admin/agent email address (required for brands and categories)")
+st.text_input("Zendesk API Token (optional)", type="password", key='zd_token', help="Your Zendesk API token from Admin Settings > API (required for brands and categories)")
 
 # Ada Configuration  
 st.subheader("🤖 Ada Configuration")
@@ -848,17 +858,42 @@ st.subheader("⚙️ Access Options")
 st.checkbox("Include articles behind login", key='include_restricted', help="Requires authentication to access private articles")
 st.checkbox("📑 Published articles only", key='published_only', help="Only fetch and upload published articles (not drafts)")
 
+# Article Name Prefix Options
+st.subheader("📝 Article Name Configuration")
+col1, col2 = st.columns([1, 2])
+
+with col1:
+    st.checkbox("Add prefix to article names", key='use_article_prefix', help="Add a custom prefix to all article names when uploading to Ada")
+
+with col2:
+    if st.session_state.get('use_article_prefix', False):
+        st.text_input("Article name prefix:", key='article_prefix', placeholder="e.g., 'FAQ: ' or '[KB] '", help="This prefix will be added to the beginning of each article name")
+    else:
+        st.info("Enable prefix option to add custom text to article names")
+
+# Show prefix preview
+if st.session_state.get('use_article_prefix', False) and st.session_state.get('article_prefix', ''):
+    prefix = st.session_state.get('article_prefix', '')
+    st.info(f"📝 **Preview:** '{prefix}How to reset your password' (prefix + original title)")
+
 # Get values from session state
 published_only = st.session_state.get('published_only', False)
 zd_email = st.session_state.get('zd_email', '')
 zd_token = st.session_state.get('zd_token', '')
 zd_subdomain = st.session_state.get('zd_subdomain', '')
+has_credentials = has_zd_credentials()
 
 # Show configuration status
-if zd_subdomain and zd_email and zd_token:
-    st.success("✅ Zendesk configuration complete")
+if zd_subdomain:
+    if has_credentials:
+        st.success("✅ Zendesk configuration complete (with authentication)")
+    else:
+        st.info("ℹ️ Zendesk subdomain configured (no authentication - limited features available)")
 else:
-    st.warning("⚠️ Please complete Zendesk configuration above")
+    st.warning("⚠️ Please provide Zendesk subdomain")
+
+if not has_credentials:
+    st.info("💡 **Note:** Without Zendesk email and API token, only locale-based filtering is available. Brands and categories require authentication.")
 
 if published_only:
     st.info("📑 Only published articles will be fetched and uploaded (drafts will be excluded)")
@@ -873,6 +908,7 @@ with st.expander("🔍 Debug Information"):
         st.write(f"• Subdomain: {zd_subdomain or '❌ Not set'}")
         st.write(f"• Email: {zd_email or '❌ Not set'}")
         st.write(f"• Token: {'✅ Set' if zd_token else '❌ Not set'}")
+        st.write(f"• Has Credentials: {'✅ Yes' if has_credentials else '❌ No'}")
         if zd_token:
             st.write(f"• Token length: {len(zd_token)} chars")
     
@@ -886,9 +922,12 @@ with st.expander("🔍 Debug Information"):
     st.write("**Options:**")
     st.write(f"• Include Restricted: {st.session_state.get('include_restricted', False)}")
     st.write(f"• Published Only: {published_only}")
+    st.write(f"• Use Article Prefix: {st.session_state.get('use_article_prefix', False)}")
+    if st.session_state.get('use_article_prefix', False):
+        st.write(f"• Article Prefix: '{st.session_state.get('article_prefix', '')}'")
     
     # Test authentication
-    if zd_email and zd_token:
+    if has_credentials:
         auth = get_zd_auth()
         if auth:
             st.success("✅ Zendesk authentication object created")
@@ -909,7 +948,7 @@ with st.expander("🔍 Debug Information"):
         else:
             st.error("❌ No Zendesk authentication available")
     else:
-        st.error("❌ Zendesk email and token required for authentication")
+        st.info("ℹ️ No Zendesk authentication provided")
 
 # Filter options
 st.subheader("🔍 Filtering Options")
@@ -918,15 +957,22 @@ st.write("Enable/disable filters and select specific options")
 col1, col2 = st.columns(2)
 
 with col1:
-    can_load_filters = zd_subdomain and zd_email and zd_token
+    can_load_filters = zd_subdomain
     
     if st.button('Load Filter Options', key="load_filters_btn", disabled=not can_load_filters):
         if can_load_filters:
             with st.spinner("Loading filter options..."):
                 locales = get_locales()
-                brands = get_brands()
-                categories = get_categories()  # This will now handle 404 gracefully
-                sections = get_sections()     # This will now handle 404 gracefully
+                
+                # Only load brands and categories if credentials are available
+                if has_credentials:
+                    brands = get_brands()
+                    categories = get_categories()
+                    sections = get_sections()
+                else:
+                    brands = []
+                    categories = []
+                    sections = []
                 
                 st.session_state['locales'] = locales
                 st.session_state['brands'] = brands
@@ -942,20 +988,22 @@ with col1:
                 
                 if loaded_items:
                     st.success(f"✅ Loaded: {', '.join(loaded_items)}")
+                    if not has_credentials:
+                        st.info("ℹ️ Only locales loaded (authentication required for brands and categories)")
                 else:
                     st.warning("⚠️ No filter options loaded. Check your configuration.")
         else:
-            st.error("❌ Please provide complete Zendesk configuration first")
+            st.error("❌ Please provide Zendesk subdomain first")
     
     if not can_load_filters:
-        st.info("💡 Complete Zendesk configuration above to load filter options")
+        st.info("💡 Provide Zendesk subdomain to load filter options")
 
 with col2:
     selected_locales = None
     selected_brands = None  
     selected_categories = None
     
-    # Locale Filter
+    # Locale Filter (always available)
     if 'locales' in st.session_state and st.session_state['locales']:
         use_locale_filter = st.checkbox("Enable Locale Filter", key="use_locale_filter")
         if use_locale_filter:
@@ -973,10 +1021,10 @@ with col2:
     elif 'locales' in st.session_state:
         st.info("No locales available for filtering")
     
-    # Brand Filter
+    # Brand Filter (requires credentials)
     if 'brands' in st.session_state and st.session_state['brands']:
-        use_brand_filter = st.checkbox("Enable Brand Filter", key="use_brand_filter")
-        if use_brand_filter:
+        use_brand_filter = st.checkbox("Enable Brand Filter", key="use_brand_filter", disabled=not has_credentials)
+        if use_brand_filter and has_credentials:
             brand_options = [(brand['name'], brand['id']) for brand in st.session_state['brands']]
             selected_brand_names = st.multiselect(
                 "Select Brands", 
@@ -986,15 +1034,23 @@ with col2:
             )
             if selected_brand_names:
                 selected_brands = [brand_id for name, brand_id in brand_options if name in selected_brand_names]
+        elif use_brand_filter and not has_credentials:
+            st.warning("⚠️ Brand filter requires Zendesk authentication")
         else:
-            st.info("Brand filter disabled")
+            if has_credentials:
+                st.info("Brand filter disabled")
+            else:
+                st.info("Brand filter disabled (requires authentication)")
     elif 'brands' in st.session_state:
-        st.info("No brands available for filtering")
+        if has_credentials:
+            st.info("No brands available for filtering")
+        else:
+            st.info("Brands require authentication")
     
-    # Category Filter
+    # Category Filter (requires credentials)
     if 'categories' in st.session_state and st.session_state['categories']:
-        use_category_filter = st.checkbox("Enable Category Filter", key="use_category_filter")
-        if use_category_filter:
+        use_category_filter = st.checkbox("Enable Category Filter", key="use_category_filter", disabled=not has_credentials)
+        if use_category_filter and has_credentials:
             category_options = [(cat['name'], cat['id']) for cat in st.session_state['categories']]
             selected_category_names = st.multiselect(
                 "Select Categories", 
@@ -1004,10 +1060,18 @@ with col2:
             )
             if selected_category_names:
                 selected_categories = [cat_id for name, cat_id in category_options if name in selected_category_names]
+        elif use_category_filter and not has_credentials:
+            st.warning("⚠️ Category filter requires Zendesk authentication")
         else:
-            st.info("Category filter disabled")
+            if has_credentials:
+                st.info("Category filter disabled")
+            else:
+                st.info("Category filter disabled (requires authentication)")
     elif 'categories' in st.session_state:
-        st.info("No categories available for filtering")
+        if has_credentials:
+            st.info("No categories available for filtering")
+        else:
+            st.info("Categories require authentication")
 
 # Brand-Subdomain Mapping Table
 if 'brands' in st.session_state and st.session_state['brands']:
@@ -1065,10 +1129,10 @@ if 'brands' in st.session_state and st.session_state['brands']:
 # Article Fetching Section
 st.subheader("📚 Article Fetching")
 
-can_fetch = (zd_subdomain and zd_email and zd_token)
+can_fetch = zd_subdomain
 
 if not can_fetch:
-    st.info("💡 Complete Zendesk configuration above to enable article fetching")
+    st.info("💡 Provide Zendesk subdomain to enable article fetching")
 
 # Show current filter selection
 if can_fetch:
@@ -1157,7 +1221,16 @@ if 'fetched_articles' in st.session_state:
                     status_icon = "✅" if not article.get('draft', True) else "📝"
                     status_text = "Published" if not article.get('draft', True) else "Draft"
                     
-                    st.write(f"**{i+1}. {article.get('title', 'No Title')}** {status_icon} {status_text}")
+                    # Show title with prefix preview if enabled
+                    original_title = article.get('title', 'No Title')
+                    if st.session_state.get('use_article_prefix', False) and st.session_state.get('article_prefix', ''):
+                        prefix = st.session_state.get('article_prefix', '')
+                        display_title = f"**{i+1}. {prefix}{original_title}** {status_icon} {status_text}"
+                        st.write(display_title)
+                        st.caption(f"Original: {original_title}")
+                    else:
+                        st.write(f"**{i+1}. {original_title}** {status_icon} {status_text}")
+                    
                     brand_display = article.get('_brand_name', article.get('brand_id', 'N/A'))
                     brand_url = article.get('_brand_url', 'N/A')
                     st.write(f"🌐 Locale: {article.get('locale', 'N/A')} | 🏢 Brand: {brand_display} | 📂 Section: {article.get('section_id', 'N/A')}")
@@ -1314,6 +1387,11 @@ if 'fetched_articles' in st.session_state:
             if override_lang:
                 st.caption(f"Override: {override_lang}")
         
+        # Show prefix preview if enabled
+        if st.session_state.get('use_article_prefix', False) and st.session_state.get('article_prefix', ''):
+            prefix = st.session_state.get('article_prefix', '')
+            st.info(f"📝 **Article names will have prefix:** '{prefix}' (e.g., '{prefix}Example Article Title')")
+        
         if st.button("📥 Download Full Ada Payload as JSON", key="download_ada_payload_btn"):
             full_formatted = format_articles_for_ada(st.session_state['fetched_articles'], selected_source_id, override_lang)
             payload_json = json.dumps(full_formatted['articles'], indent=2)
@@ -1338,7 +1416,8 @@ if 'fetched_articles' in st.session_state:
                 total_uploaded = len(formatted_articles['articles'])
                 
                 language_msg = f" with language override: {final_override_lang}" if final_override_lang else " using Zendesk languages"
-                st.success(f"🎉 Upload completed! Total articles uploaded: {total_uploaded}{language_msg}")
+                prefix_msg = f" with prefix: '{st.session_state.get('article_prefix', '')}'" if st.session_state.get('use_article_prefix', False) and st.session_state.get('article_prefix', '') else ""
+                st.success(f"🎉 Upload completed! Total articles uploaded: {total_uploaded}{language_msg}{prefix_msg}")
                 
                 if 'fetched_articles' in st.session_state:
                     del st.session_state['fetched_articles']
